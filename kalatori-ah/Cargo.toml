@@ -1,5 +1,5 @@
 [package]
-name = "kalatori"
+name = "kalatori-ah"
 authors = ["Alzymologist Oy <contact@zymologia.fi>"]
 version = "0.1.1"
 edition = "2021"
@@ -10,14 +10,11 @@ readme = true
 keywords = ["substrate", "blockchain", "finance", "service", "middleware"]
 categories = ["finance"]
 
-[workspace]
-members = ["kalatori-ah"]
-
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
 anyhow = "1"
-env_logger = "0.11"
+env_logger = "0.10"
 log = "0.4"
 subxt = { version = "0.34", features = ["substrate-compat"] }
 axum = "0.7"

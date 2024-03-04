@@ -2300,6 +2300,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kalatori-ah"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "axum",
+ "env_logger",
+ "hex",
+ "log",
+ "reconnecting-jsonrpsee-ws-client",
+ "redb",
+ "serde",
+ "serde_json",
+ "subxt",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "keccak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
