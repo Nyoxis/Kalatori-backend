@@ -599,7 +599,7 @@ impl ProcessorFinalized {
 
             match (metadata.pallet.name(), &*metadata.variant.name) {
                 (SYSTEM, UPDATE) => update = true,
-                (ASSETS, TRANSFERRED) => Transferred::deserialize(
+                (BALANCES, TRANSFERRED) => Transferred::deserialize(
                     event
                         .field_values()
                         .context("failed to decode event's fields")?,
@@ -1084,7 +1084,16 @@ impl Processor {
             .context("failed to get the chain head while constructing a transaction")?;
         let extensions = DefaultExtrinsicParamsBuilder::new()
             .mortal_unchecked(number.into(), hash, block_hash_count.into())
-            .tip_of(0, USDT_ID);
+            .tip_of(
+                0,
+                MultiLocation {
+                    parents: 0,
+                    interior: Junctions::X2(
+                        Junction::PalletInstance(50),
+                        Junction::GeneralIndex(USDT_ID.into()),
+                    ),
+                },
+            );
 
         self.api
             .tx
@@ -1113,7 +1122,7 @@ impl Processor {
     ) -> Result<()> {
         let balance = self.balance(hash, &invoice).await?;
 
-        if let Some(_remaining) = balance.checked_sub(price) {
+        if let Some(remaining) = balance.checked_sub(price) {
             changes.invoice.status = InvoiceStatus::Paid(price);
 
             let block_nonce = block
@@ -1127,76 +1136,74 @@ impl Processor {
                 let block_hash_count = properties.block_hash_count;
                 let signer = changes.invoice.signer(self.database.pair())?;
 
-                let transfers = vec![construct_transfer(
-                    &changes.invoice.recipient,
-                    price - EXPECTED_USDT_FEE,
-                )];
-                let tx = self
+                let mut transfers = vec![construct_transfer(&changes.invoice.recipient, price)];
+                let mut tx = self
                     .batch_transfer(current_nonce, block_hash_count, &signer, transfers.clone())
                     .await?;
+                let mut fee = calculate_estimate_fee(&tx).await?;
 
-                // if let Some(a) = (fee + properties.existential_deposit + price).checked_sub(balance)
-                // {
-                //     let price_mod = price - a;
+                if let Some(a) = (fee + properties.existential_deposit + price).checked_sub(balance)
+                {
+                    let price_mod = price - a;
 
-                //     transfers = vec![construct_transfer(&changes.invoice.recipient, price_mod)];
-                //     tx = self
-                //         .batch_transfer(current_nonce, block_hash_count, &signer, transfers.clone())
-                //         .await?;
+                    transfers = vec![construct_transfer(&changes.invoice.recipient, price_mod)];
+                    tx = self
+                        .batch_transfer(current_nonce, block_hash_count, &signer, transfers.clone())
+                        .await?;
 
-                //     self.methods
-                //         .author_submit_extrinsic(tx.encoded())
-                //         .await
-                //         .context("failed to submit an extrinsic")
-                //         .unwrap();
-                // } else if let Some((account, amount)) = changes.incoming.into_iter().next() {
-                //     let mut temp_transfers = transfers.clone();
+                    self.methods
+                        .author_submit_extrinsic(tx.encoded())
+                        .await
+                        .context("failed to submit an extrinsic")
+                        .unwrap();
+                } else if let Some((account, amount)) = changes.incoming.into_iter().next() {
+                    let mut temp_transfers = transfers.clone();
 
-                //     temp_transfers.push(construct_transfer(&account, amount));
-                //     tx = self
-                //         .batch_transfer(
-                //             current_nonce,
-                //             block_hash_count,
-                //             &signer,
-                //             temp_transfers.clone(),
-                //         )
-                //         .await?;
-                //     fee = calculate_estimate_fee(&tx).await?;
+                    temp_transfers.push(construct_transfer(&account, amount));
+                    tx = self
+                        .batch_transfer(
+                            current_nonce,
+                            block_hash_count,
+                            &signer,
+                            temp_transfers.clone(),
+                        )
+                        .await?;
+                    fee = calculate_estimate_fee(&tx).await?;
 
-                //     if let Some(a) =
-                //         (fee + properties.existential_deposit + amount).checked_sub(remaining)
-                //     {
-                //         let amount_mod = amount - a;
+                    if let Some(a) =
+                        (fee + properties.existential_deposit + amount).checked_sub(remaining)
+                    {
+                        let amount_mod = amount - a;
 
-                //         transfers.push(construct_transfer(&account, amount_mod));
-                //         tx = self
-                //             .batch_transfer(
-                //                 current_nonce,
-                //                 block_hash_count,
-                //                 &signer,
-                //                 transfers.clone(),
-                //             )
-                //             .await?;
+                        transfers.push(construct_transfer(&account, amount_mod));
+                        tx = self
+                            .batch_transfer(
+                                current_nonce,
+                                block_hash_count,
+                                &signer,
+                                transfers.clone(),
+                            )
+                            .await?;
 
-                //         self.methods
-                //             .author_submit_extrinsic(tx.encoded())
-                //             .await
-                //             .context("failed to submit an extrinsic")
-                //             .unwrap();
-                //     } else {
-                //         self.methods
-                //             .author_submit_extrinsic(tx.encoded())
-                //             .await
-                //             .context("failed to submit an extrinsic")
-                //             .unwrap();
-                //     }
-                // } else {
-                self.methods
-                    .author_submit_extrinsic(tx.encoded())
-                    .await
-                    .context("failed to submit an extrinsic")
-                    .unwrap();
-                // }
+                        self.methods
+                            .author_submit_extrinsic(tx.encoded())
+                            .await
+                            .context("failed to submit an extrinsic")
+                            .unwrap();
+                    } else {
+                        self.methods
+                            .author_submit_extrinsic(tx.encoded())
+                            .await
+                            .context("failed to submit an extrinsic")
+                            .unwrap();
+                    }
+                } else {
+                    self.methods
+                        .author_submit_extrinsic(tx.encoded())
+                        .await
+                        .context("failed to submit an extrinsic")
+                        .unwrap();
+                }
             }
         }
 
@@ -1215,7 +1222,7 @@ impl Processor {
 }
 
 fn construct_transfer(to: &Account, amount: Balance) -> Value {
-    const TRANSFER_KEEP_ALIVE: &str = "transfer";
+    const TRANSFER_KEEP_ALIVE: &str = "transfer_keep_alive";
 
     dbg!(amount);
 

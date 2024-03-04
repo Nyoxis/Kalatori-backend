@@ -82,25 +82,25 @@ impl Config for RuntimeConfig {
     type Hasher = <PolkadotConfig as Config>::Hasher;
     type Header = <PolkadotConfig as Config>::Header;
     type ExtrinsicParams = DefaultExtrinsicParams<Self>;
-    type AssetId = u32;
+    type AssetId = MultiLocation;
 }
 
 #[derive(EncodeAsType, Encode, Decode, DecodeAsType, Clone, Debug, Deserialize, PartialEq)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 #[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 #[codec(crate = subxt::ext::codec)]
-struct MultiLocation {
+pub struct MultiLocation {
     /// The number of parent junctions at the beginning of this `MultiLocation`.
-    parents: u8,
+    pub parents: u8,
     /// The interior (i.e. non-parent) junctions that this `MultiLocation` contains.
-    interior: Junctions,
+    pub interior: Junctions,
 }
 
 #[derive(EncodeAsType, Encode, Decode, DecodeAsType, Clone, Debug, Deserialize, PartialEq)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 #[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 #[codec(crate = subxt::ext::codec)]
-enum Junctions {
+pub enum Junctions {
     /// The interpreting consensus system.
     #[codec(index = 0)]
     Here,
@@ -113,7 +113,7 @@ enum Junctions {
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 #[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 #[codec(crate = subxt::ext::codec)]
-enum Junction {
+pub enum Junction {
     /// An instanced, indexed pallet that forms a constituent part of the context.
     ///
     /// Generally used when the context is a Frame-based chain.
