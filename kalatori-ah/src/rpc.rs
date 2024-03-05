@@ -1,8 +1,7 @@
 use crate::{
     database::{Database, Invoice, InvoiceStatus, ReadInvoices},
-    shutdown, Account, Balance, BlockNumber, Decimals, Hash, Junction, Junctions, MultiLocation,
-    Nonce, OnlineClient, RuntimeConfig, EXPECTED_USDT_FEE, SCANNER_TO_LISTENER_SWITCH_POINT,
-    USDT_ID,
+    shutdown, Account, Balance, BlockNumber, Decimals, Hash, Nonce, OnlineClient, RuntimeConfig,
+    EXPECTED_USDT_FEE, SCANNER_TO_LISTENER_SWITCH_POINT, USDT_ID,
 };
 use anyhow::{Context, Result};
 use reconnecting_jsonrpsee_ws_client::ClientBuilder;
@@ -20,12 +19,7 @@ use subxt::{
         Backend, BackendExt, RuntimeVersion,
     },
     blocks::{Block, BlocksClient},
-    config::{
-        signed_extensions::{
-            ChargeAssetTxPaymentParams, ChargeTransactionPaymentParams, CheckMortalityParams,
-        },
-        DefaultExtrinsicParamsBuilder, Header,
-    },
+    config::{DefaultExtrinsicParamsBuilder, Header},
     constants::ConstantsClient,
     dynamic::{self, Value},
     error::RpcError,
@@ -53,7 +47,6 @@ const BLOCK_NONCE_ERROR: &str = "failed to fetch an account nonce by the scanner
 // Pallets
 
 const SYSTEM: &str = "System";
-const BALANCES: &str = "Balances";
 const UTILITY: &str = "Utility";
 const ASSETS: &str = "Assets";
 
@@ -143,7 +136,7 @@ pub struct ChainProperties {
 }
 
 impl ChainProperties {
-    async fn fetch_only_constants(
+    fn fetch_only_constants(
         existential_deposit: Balance,
         decimals: Decimals,
         constants: &ConstantsClient<RuntimeConfig, OnlineClient>,
@@ -221,8 +214,7 @@ pub async fn prepare(
             .await?,
     )
     .await?;
-    let properties =
-        ChainProperties::fetch_only_constants(min_balance, decimals, &constants).await?;
+    let properties = ChainProperties::fetch_only_constants(min_balance, decimals, &constants)?;
 
     log::info!(
         "Chain properties:\n\
@@ -334,8 +326,7 @@ impl Updater {
             current_properties.existential_deposit,
             current_properties.decimals,
             &self.constants,
-        )
-        .await?;
+        )?;
 
         let mut changed = String::new();
         let mut add_change = |message: Arguments<'_>| {
@@ -458,7 +449,7 @@ impl ProcessorFinalized {
         // TODO:
         // Design a new DB format to store unpaid accounts in a separate table.
 
-        for invoice_result in self.database.read()?.invoices()?.iter()? {
+        for invoice_result in self.database.read()?.invoices()?.try_iter()? {
             let invoice = invoice_result?;
 
             match invoice.1.value().status {
@@ -590,12 +581,11 @@ impl ProcessorFinalized {
         let mut invoices_changes = HashMap::new();
 
         for event_result in events.iter() {
-            let event = event_result.context("failed to decode an event")?;
-            let metadata = event.event_metadata();
-
             const UPDATE: &str = "CodeUpdated";
             const TRANSFERRED: &str = "Transferred";
             const ASSET_MIN_BALANCE_CHANGED: &str = "AssetMinBalanceChanged";
+            let event = event_result.context("failed to decode an event")?;
+            let metadata = event.event_metadata();
 
             match (metadata.pallet.name(), &*metadata.variant.name) {
                 (SYSTEM, UPDATE) => update = true,
@@ -988,11 +978,10 @@ impl Processor {
         let mut invoices_changes = HashMap::new();
 
         for event_result in events.iter() {
-            let event = event_result.context("failed to decode an event")?;
-            let metadata = event.event_metadata();
-
             const UPDATE: &str = "CodeUpdated";
             const TRANSFERRED: &str = "Transferred";
+            let event = event_result.context("failed to decode an event")?;
+            let metadata = event.event_metadata();
 
             match (metadata.pallet.name(), &*metadata.variant.name) {
                 (SYSTEM, UPDATE) => update = true,
@@ -1009,13 +998,12 @@ impl Processor {
 
         for (invoice, changes) in invoices_changes {
             let price = match changes.invoice.status {
-                InvoiceStatus::Unpaid(price) => price,
-                InvoiceStatus::Paid(price) => price,
+                InvoiceStatus::Unpaid(price) | InvoiceStatus::Paid(price) => price,
             };
 
             self.process_unpaid(&block, changes, hash, invoice, price)
                 .await
-                .context("failed to process an unpaid invoice")?
+                .context("failed to process an unpaid invoice")?;
         }
 
         if update {
@@ -1206,15 +1194,15 @@ impl Processor {
         Ok(())
     }
 
-    async fn process_paid(
-        &self,
-        _invoice: Account,
-        _block: &Block<RuntimeConfig, OnlineClient>,
-        _changes: InvoiceChanges,
-        _hash: Hash,
-    ) -> Result<()> {
-        Ok(())
-    }
+    // async fn process_paid(
+    //     &self,
+    //     _invoice: Account,
+    //     _block: &Block<RuntimeConfig, OnlineClient>,
+    //     _changes: InvoiceChanges,
+    //     _hash: Hash,
+    // ) -> Result<()> {
+    //     Ok(())
+    // }
 }
 
 fn construct_transfer(to: &Account, amount: Balance) -> Value {
@@ -1234,11 +1222,11 @@ fn construct_transfer(to: &Account, amount: Balance) -> Value {
     .into_value()
 }
 
-async fn calculate_estimate_fee(
-    extrinsic: &SubmittableExtrinsic<RuntimeConfig, OnlineClient>,
-) -> Result<Balance> {
-    Ok(EXPECTED_USDT_FEE)
-}
+// async fn calculate_estimate_fee(
+//     extrinsic: &SubmittableExtrinsic<RuntimeConfig, OnlineClient>,
+// ) -> Result<Balance> {
+//     Ok(EXPECTED_USDT_FEE)
+// }
 
 #[derive(Debug)]
 struct InvoiceChanges {

@@ -116,17 +116,19 @@ async fn handler(
 
 async fn abcd(
     database: Arc<Database>,
-    rrecipient: Option<String>,
+    recipient_option: Option<String>,
     order: String,
-    pprice: f64,
+    price_f64: f64,
 ) -> Result<Success, anyhow::Error> {
-    let recipient = rrecipient.context("destionation address isn't set")?;
+    let recipient = recipient_option.context("destionation address isn't set")?;
     let decoded_recip = hex::decode(&recipient[2..])?;
     let recipient_account = Account::try_from(decoded_recip.as_ref())
         .map_err(|()| anyhow::anyhow!("Unknown address length"))?;
     let properties = database.properties().await;
+    #[allow(clippy::cast_precision_loss)]
     let mul = 10u128.pow(properties.decimals.try_into()?) as f64;
-    let price = (pprice * mul).round() as u128;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let price = (price_f64 * mul).round() as u128;
     let order_encoded = DeriveJunction::hard(&order).unwrap_inner();
     let invoice_account: Account = database
         .pair()
@@ -154,8 +156,10 @@ async fn abcd(
         Ok(Success {
             pay_account: format!("0x{}", HexDisplay::from(&invoice_account.as_ref())),
             price: match invoice.status {
-                InvoiceStatus::Unpaid(uprice) => convert(properties.decimals, uprice)?,
-                InvoiceStatus::Paid(uprice) => convert(properties.decimals, uprice)?,
+                InvoiceStatus::Unpaid(invoice_price) => {
+                    convert(properties.decimals, invoice_price)?
+                }
+                InvoiceStatus::Paid(invoice_price) => convert(properties.decimals, invoice_price)?,
             },
             wss: database.rpc().to_string(),
             mul: properties.decimals,
@@ -184,7 +188,7 @@ async fn abcd(
 
         Ok(Success {
             pay_account: format!("0x{}", HexDisplay::from(&invoice_account.as_ref())),
-            price: pprice,
+            price: price_f64,
             wss: database.rpc().to_string(),
             mul: properties.decimals,
             recipient,
@@ -196,7 +200,9 @@ async fn abcd(
 }
 
 fn convert(dec: u64, num: u128) -> Result<f64> {
+    #[allow(clippy::cast_precision_loss)]
     let numfl = num as f64;
+    #[allow(clippy::cast_precision_loss)]
     let mul = 10u128.pow(dec.try_into()?) as f64;
 
     Ok(numfl / mul)

@@ -1,7 +1,9 @@
 use anyhow::{Context, Error, Result};
 use database::Database;
 use env_logger::{Builder, Env};
-use environment_variables::*;
+use environment_variables::{
+    DATABASE, DECIMALS, DESTINATION, HOST, IN_MEMORY_DB, LOG, LOG_STYLE, OVERRIDE_RPC, RPC, SEED,
+};
 use log::LevelFilter;
 use rpc::Processor;
 use serde::Deserialize;
@@ -10,13 +12,7 @@ use std::{
     future::Future,
 };
 use subxt::{
-    config::{
-        signed_extensions::{
-            AnyOf, ChargeAssetTxPayment, ChargeTransactionPayment, CheckGenesis, CheckMortality,
-            CheckNonce, CheckSpecVersion, CheckTxVersion,
-        },
-        DefaultExtrinsicParams, Header,
-    },
+    config::{DefaultExtrinsicParams, Header},
     ext::{
         codec::{Decode, Encode},
         scale_decode::DecodeAsType,
@@ -129,6 +125,7 @@ enum Junction {
 }
 
 #[doc(hidden)]
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 pub async fn main() -> Result<()> {
     let mut builder = Builder::new();

@@ -107,7 +107,7 @@ struct DaemonInfo {
 }
 
 pub struct Database {
-    database: redb::Database,
+    db: redb::Database,
     properties: Arc<RwLock<ChainProperties>>,
     pair: Pair,
     rpc: String,
@@ -169,8 +169,8 @@ impl Database {
             }
             (Some(encoded_db_version), Some(daemon_info), last_block_option) => {
                 let Compact::<Version>(db_version) =
-                    decode_slot(encoded_db_version, DB_VERSION_KEY)?;
-                let DaemonInfo { rpc: db_rpc, key } = decode_slot(daemon_info, DAEMON_INFO)?;
+                    decode_slot(&encoded_db_version, DB_VERSION_KEY)?;
+                let DaemonInfo { rpc: db_rpc, key } = decode_slot(&daemon_info, DAEMON_INFO)?;
 
                 if db_version != DATABASE_VERSION {
                     anyhow::bail!(
@@ -203,7 +203,7 @@ impl Database {
                 }
 
                 if let Some(encoded_last_block) = last_block_option {
-                    Some(decode_slot::<Compact<BlockNumber>>(encoded_last_block, LAST_BLOCK)?.0)
+                    Some(decode_slot::<Compact<BlockNumber>>(&encoded_last_block, LAST_BLOCK)?.0)
                 } else {
                     None
                 }
@@ -222,16 +222,16 @@ impl Database {
             .context("failed to compact the database")?;
 
         if compacted {
-            log::debug!("The database was successfully compacted.")
+            log::debug!("The database was successfully compacted.");
         } else {
-            log::debug!("The database doesn't need the compaction.")
+            log::debug!("The database doesn't need the compaction.");
         }
 
         log::info!("Public key from the given seed: \"{public_formatted}\".");
 
         Ok((
             Arc::new(Self {
-                database,
+                db: database,
                 properties: chain,
                 pair,
                 rpc: given_rpc,
@@ -250,14 +250,14 @@ impl Database {
     }
 
     pub fn write(&self) -> Result<WriteTransaction<'_>> {
-        self.database
+        self.db
             .begin_write()
             .map(WriteTransaction)
             .context("failed to begin a write transaction for the database")
     }
 
     pub fn read(&self) -> Result<ReadTransaction<'_>> {
-        self.database
+        self.db
             .begin_read()
             .map(ReadTransaction)
             .context("failed to begin a read transaction for the database")
@@ -292,7 +292,7 @@ impl ReadInvoices<'_> {
             .context("failed to get an invoice from the database")
     }
 
-    pub fn iter(
+    pub fn try_iter(
         &self,
     ) -> Result<impl Iterator<Item = Result<(AccessGuard<'_, &[u8; 32]>, AccessGuard<'_, Invoice>)>>>
     {
@@ -356,12 +356,12 @@ impl Root<'_, '_> {
 fn get_slot(table: &Table<'_, '_, &str, Vec<u8>>, key: &str) -> Result<Option<Vec<u8>>> {
     table
         .get(key)
-        .map(|slot_option| slot_option.map(|slot| slot.value().to_vec()))
+        .map(|slot_option| slot_option.map(|slot| slot.value().clone()))
         .with_context(|| format!("failed to get the {key:?} slot"))
 }
 
-fn decode_slot<T: Decode>(slot: Vec<u8>, key: &str) -> Result<T> {
-    T::decode(&mut slot.as_ref()).with_context(|| format!("failed to decode the {key:?} slot"))
+fn decode_slot<T: Decode>(mut slot: &[u8], key: &str) -> Result<T> {
+    T::decode(&mut slot).with_context(|| format!("failed to decode the {key:?} slot"))
 }
 
 fn insert_daemon_info(
