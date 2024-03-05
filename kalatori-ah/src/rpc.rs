@@ -1084,10 +1084,7 @@ impl Processor {
             .context("failed to get the chain head while constructing a transaction")?;
         let extensions = DefaultExtrinsicParamsBuilder::new()
             .mortal_unchecked(number.into(), hash, block_hash_count.into())
-            .tip_of(
-                0,
-                USDT_ID,
-            );
+            .tip_of(0, USDT_ID);
 
         self.api
             .tx
