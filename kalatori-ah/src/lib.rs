@@ -2,7 +2,7 @@ use anyhow::{Context, Error, Result};
 use database::Database;
 use env_logger::{Builder, Env};
 use environment_variables::{
-    DATABASE, DESTINATION, HOST, IN_MEMORY_DB, LOG, LOG_STYLE, OVERRIDE_RPC, RPC, SEED,
+    DATABASE, DESTINATION, HOST, IN_MEMORY_DB, LOG, LOG_STYLE, OVERRIDE_RPC, RPC, SEED, USD_ASSET,
 };
 use log::LevelFilter;
 use rpc::Processor;
@@ -42,17 +42,33 @@ pub mod environment_variables {
     pub const OVERRIDE_RPC: &str = "KALATORI_OVERRIDE_RPC";
     pub const IN_MEMORY_DB: &str = "KALATORI_IN_MEMORY_DB";
     pub const DESTINATION: &str = "KALATORI_DESTINATION";
+    pub const USD_ASSET: &str = "KALATORI_USD_ASSET";
 }
 
 pub const DEFAULT_RPC: &str = "wss://westend-asset-hub-rpc.polkadot.io";
-pub const DEFAULT_DATABASE: &str = "database-ah.redb";
 pub const DATABASE_VERSION: Version = 0;
-// Expected USDT fee (0.03)
-pub const EXPECTED_USDT_FEE: Balance = 30000;
+// Expected USD(C/T) fee (0.03)
+pub const EXPECTED_USDX_FEE: Balance = 30000;
 
 const USDT_ID: u32 = 1984;
+const USDC_ID: u32 = 1337;
 // https://github.com/paritytech/polkadot-sdk/blob/7c9fd83805cc446983a7698c7a3281677cf655c8/substrate/client/cli/src/config.rs#L50
 const SCANNER_TO_LISTENER_SWITCH_POINT: BlockNumber = 512;
+
+#[derive(Clone, Copy)]
+enum Usd {
+    T,
+    C,
+}
+
+impl Usd {
+    fn id(self) -> u32 {
+        match self {
+            Usd::T => USDT_ID,
+            Usd::C => USDC_ID,
+        }
+    }
+}
 
 type OnlineClient = subxt::OnlineClient<RuntimeConfig>;
 type Account = <RuntimeConfig as Config>::AccountId;
@@ -147,6 +163,15 @@ pub async fn main() -> Result<()> {
         .parse()
         .with_context(|| format!("failed to convert `{HOST}` to a socket address"))?;
 
+    let usd_asset = match env::var(USD_ASSET)
+        .with_context(|| format!("`{USD_ASSET}` isn't set"))?
+        .as_str()
+    {
+        "USDC" => Usd::C,
+        "USDT" => Usd::T,
+        _ => anyhow::bail!("{USD_ASSET} must equal USDC or USDT"),
+    };
+
     let pair = Pair::from_string(
         &env::var(SEED).with_context(|| format!("`{SEED}` isn't set"))?,
         None,
@@ -170,11 +195,16 @@ pub async fn main() -> Result<()> {
     let database_path = if env::var_os(IN_MEMORY_DB).is_none() {
         Some(env::var(DATABASE).or_else(|error| {
             if error == VarError::NotPresent {
+                let default_v = match usd_asset {
+                    Usd::C => "database-ah-usdc.redb",
+                    Usd::T => "database-ah-usdt.redb",
+                };
+
                 log::debug!(
-                    "`{DATABASE}` isn't present, using the default value instead: \"{DEFAULT_DATABASE}\"."
+                    "`{DATABASE}` isn't present, using the default value instead: \"{default_v}\"."
                 );
 
-                Ok(DEFAULT_DATABASE.into())
+                Ok(default_v.into())
             } else {
                 Err(error).context(format!("failed to read `{DATABASE}`"))
             }
@@ -208,7 +238,7 @@ pub async fn main() -> Result<()> {
     let (error_tx, mut error_rx) = mpsc::unbounded_channel();
 
     let (api_config, endpoint_properties, updater) =
-        rpc::prepare(endpoint, shutdown_notification.clone())
+        rpc::prepare(endpoint, shutdown_notification.clone(), usd_asset)
             .await
             .context("failed to prepare the node module")?;
 

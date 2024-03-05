@@ -1,7 +1,7 @@
 use crate::{
     database::{Database, Invoice, InvoiceStatus, ReadInvoices},
     shutdown, Account, Balance, BlockNumber, Decimals, Hash, Nonce, OnlineClient, RuntimeConfig,
-    EXPECTED_USDT_FEE, SCANNER_TO_LISTENER_SWITCH_POINT, USDT_ID,
+    Usd, EXPECTED_USDX_FEE, SCANNER_TO_LISTENER_SWITCH_POINT,
 };
 use anyhow::{Context, Result};
 use reconnecting_jsonrpsee_ws_client::ClientBuilder;
@@ -81,12 +81,13 @@ async fn fetch_runtime(
 
 async fn fetch_min_balance(
     storage_finalized: Storage<RuntimeConfig, OnlineClient>,
+    usd_asset: &Usd,
 ) -> Result<Balance> {
     const ASSET: &str = "Asset";
     const MIN_BALANCE: &str = "min_balance";
 
     let asset_info = storage_finalized
-        .fetch(&dynamic::storage(ASSETS, ASSET, vec![USDT_ID]))
+        .fetch(&dynamic::storage(ASSETS, ASSET, vec![usd_asset.id()]))
         .await
         .context("failed to fetch asset info from the chain")?
         .context("received nothing after fetching asset info from the chain")?
@@ -117,12 +118,15 @@ async fn fetch_metadata(backend: &impl Backend<RuntimeConfig>, at: Hash) -> Resu
         .map_err(Into::into)
 }
 
-async fn fetch_decimals(storage: Storage<RuntimeConfig, OnlineClient>) -> Result<Decimals> {
+async fn fetch_decimals(
+    storage: Storage<RuntimeConfig, OnlineClient>,
+    usd_asset: &Usd,
+) -> Result<Decimals> {
     const METADATA: &str = "Metadata";
     const DECIMALS: &str = "decimals";
 
     let asset_metadata = storage
-        .fetch(&dynamic::storage(ASSETS, METADATA, vec![USDT_ID]))
+        .fetch(&dynamic::storage(ASSETS, METADATA, vec![usd_asset.id()]))
         .await
         .context("failed to fetch asset info from the chain")?
         .context("received nothing after fetching asset info from the chain")?
@@ -156,6 +160,7 @@ pub struct ChainProperties {
     pub existential_deposit: Balance,
     pub block_hash_count: BlockNumber,
     pub decimals: Decimals,
+    pub usd_asset: Usd,
 }
 
 impl ChainProperties {
@@ -163,6 +168,7 @@ impl ChainProperties {
         existential_deposit: Balance,
         decimals: Decimals,
         constants: &ConstantsClient<RuntimeConfig, OnlineClient>,
+        usd_asset: Usd,
     ) -> Result<Self> {
         const ADDRESS_PREFIX: (&str, &str) = (SYSTEM, "SS58Prefix");
         const BLOCK_HASH_COUNT: (&str, &str) = (SYSTEM, "BlockHashCount");
@@ -172,6 +178,7 @@ impl ChainProperties {
             existential_deposit,
             decimals,
             block_hash_count: fetch_constant(constants, BLOCK_HASH_COUNT)?,
+            usd_asset,
         })
     }
 }
@@ -198,6 +205,7 @@ impl CheckedUrl {
 pub async fn prepare(
     url: String,
     shutdown_notification: CancellationToken,
+    usd_asset: Usd,
 ) -> Result<(ApiConfig, EndpointProperties, Updater)> {
     // TODO:
     // The current reconnecting client implementation automatically restores all subscriptions,
@@ -234,21 +242,29 @@ pub async fn prepare(
             .storage()
             .at_latest()
             .await?,
+        &usd_asset,
     )
     .await?;
-    let decimals = fetch_decimals(api.storage().at_latest().await?).await?;
-    let properties = ChainProperties::fetch_only_constants(min_balance, decimals, &constants)?;
+    let decimals = fetch_decimals(api.storage().at_latest().await?, &usd_asset).await?;
+    let properties =
+        ChainProperties::fetch_only_constants(min_balance, decimals, &constants, usd_asset)?;
 
     log::info!(
         "Chain properties:\n\
          Address format: \"{}\" ({}).\n\
          Decimal places number: {}.\n\
          Existential deposit: {}.\n\
+         USD asset: {} ({}).\n\
          Block hash count: {}.",
         properties.address_format,
         properties.address_format.prefix(),
         decimals,
         properties.existential_deposit,
+        match properties.usd_asset {
+            Usd::C => "USDC",
+            Usd::T => "USDT",
+        },
+        properties.usd_asset.id(),
         properties.block_hash_count
     );
 
@@ -349,6 +365,7 @@ impl Updater {
             current_properties.existential_deposit,
             current_properties.decimals,
             &self.constants,
+            current_properties.usd_asset,
         )?;
 
         let mut changed = String::new();
@@ -620,18 +637,26 @@ impl ProcessorFinalized {
                         .context("failed to decode event's fields")?,
                 )
                 .context("failed to deserialize a transfer event")?
-                .process(&mut invoices_changes, &read_invoices)?,
+                .process(
+                    &mut invoices_changes,
+                    &read_invoices,
+                    self.database.properties().await.usd_asset,
+                )?,
                 (ASSETS, ASSET_MIN_BALANCE_CHANGED) => {
-                    let new_min_balance =
-                        fetch_min_balance(self.client.storage().at_latest().await?).await?;
                     let mut props = self.database.properties_write().await;
+                    let new_min_balance = fetch_min_balance(
+                        self.client.storage().at_latest().await?,
+                        &props.usd_asset,
+                    )
+                    .await?;
 
                     props.existential_deposit = new_min_balance;
                 }
                 (ASSETS, METADATA_SET) => {
-                    let new_decimals =
-                        fetch_decimals(self.client.storage().at_latest().await?).await?;
                     let props = self.database.properties_write().await;
+                    let new_decimals =
+                        fetch_decimals(self.client.storage().at_latest().await?, &props.usd_asset)
+                            .await?;
 
                     if props.decimals != new_decimals {
                         anyhow::bail!("decimals have been changed: {new_decimals}");
@@ -696,7 +721,7 @@ impl ProcessorFinalized {
                 ASSETS,
                 ACCOUNT,
                 vec![
-                    Value::from(USDT_ID),
+                    Value::from(self.database.properties().await.usd_asset.id()),
                     Value::from_bytes(AsRef::<[u8; 32]>::as_ref(account)),
                 ],
             ))
@@ -1025,7 +1050,11 @@ impl Processor {
                         .context("failed to decode event's fields")?,
                 )
                 .context("failed to deserialize a transfer event")?
-                .process(&mut invoices_changes, &read_invoices)?,
+                .process(
+                    &mut invoices_changes,
+                    &read_invoices,
+                    self.database.properties().await.usd_asset,
+                )?,
                 _ => {}
             }
         }
@@ -1068,7 +1097,7 @@ impl Processor {
                 ASSETS,
                 ACCOUNT,
                 vec![
-                    Value::from(USDT_ID),
+                    Value::from(self.database.properties().await.usd_asset.id()),
                     Value::from_bytes(AsRef::<[u8; 32]>::as_ref(account)),
                 ],
             ))
@@ -1106,10 +1135,7 @@ impl Processor {
             .context("failed to get the chain head while constructing a transaction")?;
         let extensions = DefaultExtrinsicParamsBuilder::new()
             .mortal_unchecked(number.into(), hash, block_hash_count.into())
-            .tip_of(
-                0,
-                USDT_ID,
-            );
+            .tip_of(0, self.database.properties().await.usd_asset.id());
 
         self.api
             .tx
@@ -1154,7 +1180,8 @@ impl Processor {
 
                 let transfers = vec![construct_transfer(
                     &changes.invoice.recipient,
-                    price - EXPECTED_USDT_FEE,
+                    price - EXPECTED_USDX_FEE,
+                    self.database.properties().await.usd_asset,
                 )];
                 let tx = self
                     .batch_transfer(current_nonce, block_hash_count, &signer, transfers.clone())
@@ -1239,7 +1266,7 @@ impl Processor {
     // }
 }
 
-fn construct_transfer(to: &Account, amount: Balance) -> Value {
+fn construct_transfer(to: &Account, amount: Balance, usd_asset: Usd) -> Value {
     const TRANSFER_KEEP_ALIVE: &str = "transfer";
 
     dbg!(amount);
@@ -1248,7 +1275,7 @@ fn construct_transfer(to: &Account, amount: Balance) -> Value {
         ASSETS,
         TRANSFER_KEEP_ALIVE,
         vec![
-            USDT_ID.into(),
+            usd_asset.id().into(),
             scale_value::value!(Id(Value::from_bytes(to))),
             amount.into(),
         ],
@@ -1259,7 +1286,7 @@ fn construct_transfer(to: &Account, amount: Balance) -> Value {
 // async fn calculate_estimate_fee(
 //     extrinsic: &SubmittableExtrinsic<RuntimeConfig, OnlineClient>,
 // ) -> Result<Balance> {
-//     Ok(EXPECTED_USDT_FEE)
+//     Ok(EXPECTED_USDX_FEE)
 // }
 
 #[derive(Debug)]
@@ -1291,10 +1318,11 @@ impl Transferred {
         self,
         invoices_changes: &mut HashMap<Account, InvoiceChanges>,
         invoices: &ReadInvoices<'_>,
+        usd_asset: Usd,
     ) -> Result<()> {
         log::debug!("Transferred event: {self:?}");
 
-        if self.from == self.to || self.amount == 0 || self.asset_id != USDT_ID {
+        if self.from == self.to || self.amount == 0 || self.asset_id != usd_asset.id() {
             return Ok(());
         }
 
