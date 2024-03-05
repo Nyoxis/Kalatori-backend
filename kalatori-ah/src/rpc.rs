@@ -1086,13 +1086,7 @@ impl Processor {
             .mortal_unchecked(number.into(), hash, block_hash_count.into())
             .tip_of(
                 0,
-                MultiLocation {
-                    parents: 0,
-                    interior: Junctions::X2(
-                        Junction::PalletInstance(50),
-                        Junction::GeneralIndex(USDT_ID.into()),
-                    ),
-                },
+                USDT_ID,
             );
 
         self.api
@@ -1122,7 +1116,7 @@ impl Processor {
     ) -> Result<()> {
         let balance = self.balance(hash, &invoice).await?;
 
-        if let Some(remaining) = balance.checked_sub(price) {
+        if let Some(_remaining) = balance.checked_sub(price) {
             changes.invoice.status = InvoiceStatus::Paid(price);
 
             let block_nonce = block
