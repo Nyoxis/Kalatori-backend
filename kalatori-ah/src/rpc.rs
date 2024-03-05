@@ -117,6 +117,29 @@ async fn fetch_metadata(backend: &impl Backend<RuntimeConfig>, at: Hash) -> Resu
         .map_err(Into::into)
 }
 
+async fn fetch_decimals(storage: Storage<RuntimeConfig, OnlineClient>) -> Result<Decimals> {
+    const METADATA: &str = "Metadata";
+    const DECIMALS: &str = "decimals";
+
+    let asset_metadata = storage
+        .fetch(&dynamic::storage(ASSETS, METADATA, vec![USDT_ID]))
+        .await
+        .context("failed to fetch asset info from the chain")?
+        .context("received nothing after fetching asset info from the chain")?
+        .to_value()
+        .context("failed to decode account info")?;
+    let encoded_decimals = asset_metadata
+        .at(DECIMALS)
+        .with_context(|| format!("{DECIMALS} field wasn't found in asset info"))?;
+
+    encoded_decimals
+        .as_u128()
+        .map(|num| num.try_into().expect("must be less than u64"))
+        .with_context(|| {
+            format!("expected `u128` as the type of the min balance, got {encoded_decimals}")
+        })
+}
+
 fn fetch_constant<T: DecodeAsType>(
     constants: &ConstantsClient<RuntimeConfig, OnlineClient>,
     constant: (&str, &str),
@@ -174,7 +197,6 @@ impl CheckedUrl {
 
 pub async fn prepare(
     url: String,
-    decimals: Decimals,
     shutdown_notification: CancellationToken,
 ) -> Result<(ApiConfig, EndpointProperties, Updater)> {
     // TODO:
@@ -214,6 +236,7 @@ pub async fn prepare(
             .await?,
     )
     .await?;
+    let decimals = fetch_decimals(api.storage().at_latest().await?).await?;
     let properties = ChainProperties::fetch_only_constants(min_balance, decimals, &constants)?;
 
     log::info!(
@@ -584,6 +607,8 @@ impl ProcessorFinalized {
             const UPDATE: &str = "CodeUpdated";
             const TRANSFERRED: &str = "Transferred";
             const ASSET_MIN_BALANCE_CHANGED: &str = "AssetMinBalanceChanged";
+            const METADATA_SET: &str = "MetadataSet";
+
             let event = event_result.context("failed to decode an event")?;
             let metadata = event.event_metadata();
 
@@ -602,6 +627,15 @@ impl ProcessorFinalized {
                     let mut props = self.database.properties_write().await;
 
                     props.existential_deposit = new_min_balance;
+                }
+                (ASSETS, METADATA_SET) => {
+                    let new_decimals =
+                        fetch_decimals(self.client.storage().at_latest().await?).await?;
+                    let props = self.database.properties_write().await;
+
+                    if props.decimals != new_decimals {
+                        anyhow::bail!("decimals have been changed: {new_decimals}");
+                    }
                 }
                 _ => {}
             }

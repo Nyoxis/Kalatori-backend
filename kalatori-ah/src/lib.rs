@@ -2,7 +2,7 @@ use anyhow::{Context, Error, Result};
 use database::Database;
 use env_logger::{Builder, Env};
 use environment_variables::{
-    DATABASE, DECIMALS, DESTINATION, HOST, IN_MEMORY_DB, LOG, LOG_STYLE, OVERRIDE_RPC, RPC, SEED,
+    DATABASE, DESTINATION, HOST, IN_MEMORY_DB, LOG, LOG_STYLE, OVERRIDE_RPC, RPC, SEED,
 };
 use log::LevelFilter;
 use rpc::Processor;
@@ -41,7 +41,6 @@ pub mod environment_variables {
     pub const RPC: &str = "KALATORI_RPC";
     pub const OVERRIDE_RPC: &str = "KALATORI_OVERRIDE_RPC";
     pub const IN_MEMORY_DB: &str = "KALATORI_IN_MEMORY_DB";
-    pub const DECIMALS: &str = "KALATORI_DECIMALS";
     pub const DESTINATION: &str = "KALATORI_DESTINATION";
 }
 
@@ -190,11 +189,6 @@ pub async fn main() -> Result<()> {
         None
     };
 
-    let decimals = env::var(DECIMALS)
-        .with_context(|| format!("`{DECIMALS}` isn't set"))?
-        .parse()
-        .with_context(|| format!("failed to convert `{DECIMALS}` to decimals"))?;
-
     let destination = match env::var(DESTINATION) {
         Ok(destination) => Ok(Some(
             AccountId32::try_from(hex::decode(&destination[2..])?.as_ref())
@@ -214,7 +208,7 @@ pub async fn main() -> Result<()> {
     let (error_tx, mut error_rx) = mpsc::unbounded_channel();
 
     let (api_config, endpoint_properties, updater) =
-        rpc::prepare(endpoint, decimals, shutdown_notification.clone())
+        rpc::prepare(endpoint, shutdown_notification.clone())
             .await
             .context("failed to prepare the node module")?;
 
