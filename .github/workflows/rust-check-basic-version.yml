@@ -1,0 +1,64 @@
+name:                         Rust check basic version
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+    branches:
+      - main
+    paths-ignore:
+      - 'kalatori-ah/**'
+
+jobs:
+  version:
+    name:                     Check version
+    runs-on:                  ubuntu-latest
+    env:
+      GH_TOKEN:               ${{ secrets.GITHUB_TOKEN }}
+    steps:
+
+      - name:                 Cancel Previous Runs
+        uses:                 styfle/cancel-workflow-action@0.12.1
+        with:
+          access_token:       ${{ github.token }}
+
+      - name:                 Install Rust stable toolchain
+        uses:                 actions-rs/toolchain@v1.0.7
+        with:
+          profile:            minimal
+          toolchain:          stable
+          override:           true
+
+      - name:                 Checkout base
+        uses:                 actions/checkout@v4.1.1
+        with:
+          ref:                ${{ github.event.pull_request.base.ref }}
+          fetch-depth:        50
+          submodules:         'recursive'
+
+      - name:                 Get target package version
+        run:                  >
+                              echo "TARGET_VERSION=$(
+                              cargo metadata --format-version=1 --no-deps |
+                              jq -r '.packages[] | select(.name == "kalatori") | .version'
+                              )" >> $GITHUB_ENV
+
+      - name:                 Checkout sources
+        uses:                 actions/checkout@v4.1.1
+        with:
+          fetch-depth:        50
+          submodules:         'recursive'
+
+      - name:                 Get source package version
+        run:                  >
+                              echo "VERSION=$(
+                              cargo metadata --format-version=1 --no-deps |
+                              jq -r '.packages[] | select(.name == "kalatori") | .version'
+                              )" >> $GITHUB_ENV
+
+      - name:                 Check if source version is greater
+        run:                  ./is_version_greater.sh $VERSION $TARGET_VERSION
+
+

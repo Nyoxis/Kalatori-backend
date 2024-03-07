@@ -34,15 +34,33 @@ jobs:
       - name:                 Rust Cache
         uses:                 Swatinem/rust-cache@v2.7.3
 
-      - name:                 cargo build
+      - name:                 cargo build basic
         run:                  cargo build --release
 
-      - name:                 Get package version
+      - name:                 Get basic package version
         run:                  >
                               echo "VERSION=$(
                               cargo metadata --format-version=1 --no-deps |
                               jq -r '.packages[] | select(.name == "kalatori") | .version'
                               )" >> $GITHUB_ENV
 
-      - name:                 Draft release binary
-        run:                  gh release create -d $VERSION ./target/release/kalatori --generate-notes
+      - name:                 cargo build ah
+        run:                  cargo build --release --manifest-path=./kalatori-ah/Cargo.toml
+
+      - name:                 Get ah package version
+        run:                  >
+                              echo "AH_VERSION=$(
+                              cargo metadata
+                              --format-version=1
+                              --no-deps
+                              --manifest-path=./kalatori-ah/Cargo.toml |
+                              jq -r '.packages[] | select(.name == "kalatori") | .version'
+                              )" >> $GITHUB_ENV
+
+      - name:                 Draft release binaries
+        run:                  >
+                              gh release create
+                              -d "$VERSION, AH-$AH_VERSION"
+                              ./target/release/kalatori
+                              ./target/release/kalatori-ah
+                              --generate-notes

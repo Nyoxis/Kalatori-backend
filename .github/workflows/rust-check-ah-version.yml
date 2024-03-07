@@ -1,4 +1,4 @@
-name:                         Rust check version
+name:                         Rust check ah version
 
 on:
   pull_request:
@@ -8,6 +8,8 @@ on:
       - synchronize
     branches:
       - main
+    paths:
+      - 'kalatori-ah/**'
 
 jobs:
   version:
@@ -31,24 +33,18 @@ jobs:
 
       - name:                 Checkout base
         uses:                 actions/checkout@v4.1.1
-        if:                   github.event_name == 'pull_request'
         with:
           ref:                ${{ github.event.pull_request.base.ref }}
           fetch-depth:        50
           submodules:         'recursive'
 
-      - name:                 Checkout before push
-        uses:                 actions/checkout@v4.1.1
-        if:                   github.event_name != 'pull_request'
-        with:
-          ref:                ${{ github.event.before }}
-          fetch-depth:        50
-          submodules:         'recursive'
-
-      - name:                 Get package version before or base
+      - name:                 Get target package version
         run:                  >
-                              echo "BEFORE_VERSION=$(
-                              cargo metadata --format-version=1 --no-deps |
+                              echo "TARGET_VERSION=$(
+                              cargo metadata
+                              --format-version=1
+                              --no-deps
+                              --manifest-path=./kalatori-ah/Cargo.toml |
                               jq -r '.packages[] | select(.name == "kalatori") | .version'
                               )" >> $GITHUB_ENV
 
@@ -58,14 +54,17 @@ jobs:
           fetch-depth:        50
           submodules:         'recursive'
 
-      - name:                 Get package version
+      - name:                 Get source package version
         run:                  >
                               echo "VERSION=$(
-                              cargo metadata --format-version=1 --no-deps |
+                              cargo metadata
+                              --format-version=1
+                              --no-deps
+                              --manifest-path=./kalatori-ah/Cargo.toml |
                               jq -r '.packages[] | select(.name == "kalatori") | .version'
                               )" >> $GITHUB_ENV
 
-      - name:                 Check which version is greater
-        run:                  ./is_version_greater.sh $VERSION $BEFORE_VERSION
+      - name:                 Check if source version is greater
+        run:                  ./is_version_greater.sh $VERSION $TARGET_VERSION
 
 
